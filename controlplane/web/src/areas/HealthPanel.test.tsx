@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HealthPanel } from "./HealthPanel";
 
@@ -54,6 +54,51 @@ describe("HealthPanel", () => {
     const diags = await screen.findByRole("list", { name: "Spec diagnostics" });
     expect(diags).toHaveTextContent("$.resources[0].fields[1].code_name");
     expect(diags).toHaveTextContent("already used");
+  });
+
+  it("clears the previous project's health while the next project loads", async () => {
+    const projectA = {
+      ok: true,
+      status: 200,
+      statusText: "",
+      json: async () => ({
+        data: {
+          facets: [{ name: "Project A health", status: "ok", summary: "A is healthy" }],
+        },
+      }),
+    } as Response;
+    const projectB = {
+      ok: true,
+      status: 200,
+      statusText: "",
+      json: async () => ({
+        data: {
+          facets: [{ name: "Project B health", status: "ok", summary: "B is healthy" }],
+        },
+      }),
+    } as Response;
+
+    let resolveProjectB!: (response: Response) => void;
+    const projectBRequest = new Promise<Response>((resolve) => {
+      resolveProjectB = resolve;
+    });
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(projectA)
+      .mockImplementationOnce(() => projectBRequest) as unknown as typeof fetch;
+
+    const { rerender } = render(<HealthPanel projectID={1} reloadKey={0} />);
+    expect(await screen.findByText("Project A health")).toBeInTheDocument();
+
+    rerender(<HealthPanel projectID={2} reloadKey={0} />);
+
+    expect(screen.queryByText("Project A health")).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Project health" })).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveProjectB(projectB);
+    });
+    expect(await screen.findByText("Project B health")).toBeInTheDocument();
   });
 
   // A transient health-fetch failure must not latch: once a later load (a bumped
